@@ -1,0 +1,388 @@
+---
+title: "The Passer Report"
+author: "Jorge Garcia Jr"
+date: "2024-12-8"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(gganimate)
+library(plotly)
+library(collapsibleTree)
+library(leaflet)
+library(DT)
+library(readr)
+library(corrplot)
+library(patchwork)
+```
+
+### Introduction
+
+
+This report will discuss findings in my data set. It will go over the 3 questions I chose out with the help of my professor.
+
+
+*To begin I will give a short summary of my data set* \
+My data set contains all passers in the NFL from 2009-2018. This means every single player that passed the ball. So for example, if a wide reciever passed the ball for even a play, they would be registered as a passer for the season. Despite there being only 32 teams in the NFL and 10 seasons in question, we ended up with 958 datapoints. I scraped my data from a source on GitHub that had the years seperated, I had to merge and clean the data. In this report I will provide the code I used to create the data frame I used, but I will refer to is as its csv form that I created (To show that I cleaned the data, and turn in the data set I used to Brightspace). 
+
+
+If seeing Markdown, code for datacleaning is below, **If seeing knitted report Ignore this Line**
+```{r, include = FALSE}
+
+col_order = c("Rank", "Player", "Team", "Age", "Position", "Games", "Starts", "Record", "Completions", "Attempts", "Completion%", "Pass_Yards", "TD", "TD%", "Int", "Int%", "Longest Pass", "Yards/Pass_Attempt", "Adjusted_Yards/Attempt", "Yards/Carry", "Yards/Game", "Rate", "Quarterback_Rating", "Sacks", "Rush_Yards", "Net_Yards/Attempt", "Adjusted_Net_Yards/Attempt", "Sack%", "4th_Quarter_Comebacks", "Game_Winning_Drives")
+
+pass_2018 <- read_csv("pass-2018.csv", show_col_types = FALSE) %>%
+  mutate(Rk = row_number()) %>%
+  select(Rk, everything()) %>%
+  mutate(QBrec = if_else(
+    str_detect(QBrec, "^0?[0-9]{1,2}/0?[0-9]{1,2}/[0-9]{4}$"), 
+    str_replace_all(QBrec, "0?([0-9]+)/0?([0-9]+)/[0-9]{3}([0-9])", "\\1-\\2-\\3"),
+    QBrec 
+  )) #Got some help on the stringr function here from ChatGPT, asked how to use mutate and stringr to go from WW-LL-xxxT to W-L-T            and it gave me this mutate function
+colnames(pass_2018) <- col_order
+
+
+pass <- c(
+  "pass-2009.csv",
+  "pass-2010.csv",
+  "pass-2011.csv",
+  "pass-2012.csv",
+  "pass-2013.csv",
+  "pass-2014.csv",
+  "pass-2015.csv",
+  "pass-2016.csv",
+  "pass-2017.csv"
+)
+
+rest <- read_csv(pass, show_col_types = FALSE)
+colnames(rest) <- col_order
+
+lengths <- c(108, 102, 96, 85, 85, 100, 86, 96, 94, 106)
+years <- 2009:2018
+
+
+data <- rbind(rest, pass_2018) %>% 
+  mutate(Year = rep(years, times = lengths)) %>%
+  mutate(Player = str_replace(Player, "^([A-Za-z]+\\s[A-Za-z]+).*", "\\1")) %>%
+  select(Rank, Year, everything()) %>%
+  mutate(Position = toupper(Position))
+
+#write_csv(data, 'project_data.csv')
+```
+
+
+
+### The Dataframe
+
+
+Here is my dataframe fully, I will make it interactive using the datatable library in case you want to scoll through it, sort it, or fiddle with it by editing. 
+```{r, message = FALSE}
+df <- read_csv('project_data.csv')
+datatable(df)
+```
+
+
+*Now I will begin with my questions for the report*
+
+
+# Question 1
+### How does the age of Passers vary in the dataset Subquestion: How does it vary through the years ? (Passing Yards [Continuous] vs Team [Categorical])
+
+
+To answer the first part of the question I had to make a histogram, except I did not need bins as ages in the NFL don't vary too much, so I was able to use a bar plot using the stat = "count" function. Here's a look at the plot (Made Interactive, in case you wanted to take a closer look):
+
+```{r, echo = FALSE}
+plot1 <- ggplot(df, aes(x = Age)) + geom_bar(stat = "count", color = "white", fill = "blue") + 
+  theme(panel.background = element_rect(fill = "red")) + #Got this line from Stack Overflow (Searched, how to change color of background on ggplot)
+  labs(
+    title = "Age of Passers in NFL from 2009:2018",
+    subtitle = "Variation of Age in NFL Passers",
+    x = "Age",
+    y = "# of Passers"
+  )
+
+ggplotly(plot1)
+```
+
+
+As we can see, the majority of passers are going to be in that mid 20's range. Like in all sports, football is a sport that is mostly comprised of young adults, in an especially physical sport like football, wear and tear is obvious, in this graph we can see a drop off in passers in the league post 28 years old. following that is a negative slope. Only the really great players stick around the league; for reference, here are all the quarterbacks post 35 years old in the dataset with more than 10 starts (games featured in). Lets just take a look at the top 7:
+
+
+```{r, echo = FALSE}
+ov35 <- df %>%
+  filter(Position == "QB", Age >= 35) %>%
+  group_by(Player) %>%
+  summarise(total_starts = sum(Starts)) %>%
+  filter(total_starts >= 10) %>%
+  arrange(desc(total_starts)) %>%
+  head(., 7)
+
+datatable(ov35)
+```
+
+
+As we can see, these quarterbacks are all household names, only the great players make it into their 30's in the NFL. Which explains the huge drop off from 28 to 29 years old.
+
+
+Despite this, the NFL consistently has about the same average age at Quarterback, this is because of the NFL Draft: Every year College Prsopects enter the NFL as rookies, and older players retire. Here is a look at how the minimum, mean, and maximum age of Quarterbacks vary over the years in my dataset. 
+
+
+```{r, echo = FALSE}
+q1_df2 <- df %>%
+  filter(Position == "QB") %>%
+  group_by(Year) %>%
+  summarise(avg_age = mean(Age),
+            min_age = min(Age),
+            max_age = max(Age)) %>%
+  pivot_longer(cols = c(avg_age, min_age, max_age), names_to = "Type", values_to = "Age")
+
+ggplot(q1_df2, aes(x = Year, y = Age, color = Type))  +
+  geom_line() +
+  theme(panel.background = element_rect(fill = "white")) + #Going to continue using this line, it's handy 
+  labs(
+    title = "Age of NFL Passers from 2009:2018",
+    x = "Year",
+    y = "Age",
+    color = "Legend"
+    ) + 
+  scale_color_manual(
+    values = c(
+      avg_age = "black",   
+      min_age = "red",     
+      max_age = "blue"  
+    )
+  ) 
+```
+
+
+As we can see there aren't a whole lot of changes, and ages of quarterbacks tend to average out at 25-28 years old consistently year to year. The only thing there is a bit of change at is in the maximum age, but this is becuase of how hard it is to stay healthy in a contact sport like football.
+
+
+### Conclusion for Question 1: 
+
+We can conclude that the answer to our question: *How does the age of Passers vary in the dataset Subquestion: How does it vary through the years ?* is that age in passers tends to average out in the 25-28 years old range, and the quarterbacks who do stick around into the late years are usually the star Quarterbacks who are household names. 
+
+
+# Question 2
+### Is there a relationship between a quarterback's Sacks and their total passing Yards + Rushing Yards? (Sacks [continuous] vs Total Yards [Continuous])
+
+
+This Question is very clear and concise, how do sacks affect the total yards of a quarterback ? The easiest way to show this is to put it on a graph, So here is an interactive scatterplot to give us just that. 
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+total_yd <- df %>%
+  filter(Position == "QB") %>%
+  mutate(Total_Yards = Pass_Yards + Rush_Yards) %>%
+  mutate(avg_sacks = Sacks / Games)
+  
+plot2 <- ggplot(total_yd, aes(x = Sacks, y = Total_Yards, label = Player)) + 
+  geom_point(color = "red") +
+  geom_smooth(method ="lm", color = "black", se = FALSE) +
+  labs (
+    title = "Covariation of Sacks to Total Yards, 2009 - 2018",
+    subtitle = "Sacks VS Total Yards for all Passers with the most Total Yards between 2009 - 2018",
+    x = "Sack Total",
+    y = "Total Yards (Pass + Rush) in a season"
+  ) 
+
+ggplotly(plot2)
+
+corr <- total_yd %>%
+  select(Year, Total_Yards, Sacks)
+
+#cor(corr)
+```
+
+
+In this scatterplot we can see that there is oddly a positive relationship between Sacks and Total Yards (The correlation was .8), I decided I would alter my code so I could see the average sacks per game compared to total yards which is when I got this: 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+plot3 <- ggplot(total_yd, aes(x = avg_sacks, y = Total_Yards, label = Player)) + 
+  geom_point(color = "red") +
+  geom_smooth(method ="lm", color = "black", se = FALSE) +
+  labs (
+    title = "Covariation of Average Sacks Per Game to Total Yards, 2009 - 2018",
+    subtitle = "Sacks VS Total Yards for all Passers with the most Total Yards between 2009 - 2018",
+    x = "Average Sacks Per Game",
+    y = "Total Yards (Pass + Rush) in a season"
+  ) 
+
+ggplotly(plot3)
+
+corr <- total_yd %>%
+  select(Year, Total_Yards, avg_sacks)
+#cor(corr)
+```
+
+
+See this graph makes more sense (correlation = 0.19), As we can see not being sacked more than about 3 times a game helps quarterbacks make better decisions and have better seasons. Except, when looking at my data I actually found a Caveat, If we look at the top 50 Quarterbacks in the dataset, we actually come to find out that there is no relationship between sacks and the Yardage performance of the season. 
+
+
+```{r, echo = FALSE}
+q2 <- total_yd %>%
+  arrange(desc(Total_Yards)) %>%
+  head(., 50) 
+  
+
+plot4 <- ggplot(q2, aes(x = avg_sacks, y = Total_Yards, label = Player)) + 
+  geom_point(color = "red") +
+  labs (
+    title = "Covariation of Average Sacks Per Game to Total Yards, top 50 Yardage Leaders",
+    subtitle = "Sacks VS Total Yards for the 50 Passers with the most Total Yards between 2009 - 2018",
+    x = "Average Sacks Per Game",
+    y = "Total Yards (Pass + Rush) in a season"
+  )
+
+ggplotly(plot4)
+```
+
+
+This finding is incredible, it goes on to prove what we hear in the media all the time: "When you have the right quarterback nothing matters. Good Quraterbacks make with what they have which is why we see quarterbacks who average more than 3 sacks still be successful enough to be in this graph like Aaron Rodgers and also make better calls at the line of scrimmage, for example: Peighton Manning is regarded as one of if not the best Pre-snap Quarterbacks of all time, so it makes sense that his successful campaign with the Broncos had him getting 5597 total yards with just a 1.125 Sacks per game.
+
+
+### Conclusion for Question 2:
+
+
+We can conclude that Sacks absolutely matter, it is extremely hard to succeed as a Quarterback especially if you average more than 4 sacks a game. On the other hand though, great Quarterbacks make it easier to succeed despite struggles with protection. The better Quarterback you have, the less that it matters whether or not the offensive line is good enough to not allow sacks. 
+
+
+# Question 3
+### Which quarterbacks led the most game-winning drives over the decade, and how does their success compare to their overall performance metrics ? (Game Winning Drives [Continuous] Vs Player [Categorical] Vs Other Continuous Metrics)
+
+
+To begin to answer this questions I get striked with the curiosity. Who are the most successful quarterbacks when it comes to Game Winning Drives ? Here's a datatable to give you the top 5 from 2009 - 2018
+```{r, echo = FALSE}
+# Need to make new Dataframe to do this:
+gwd <- df %>%
+  group_by(Player) %>%
+  summarise(
+    Total_Games = sum(Games),
+    Total_Game_Winning_Drives = sum(Game_Winning_Drives),
+    Years = n_distinct(Year),
+    Avg_TD_per_Year = mean(TD),
+    Avg_Int_per_Year = mean(Int),
+    Avg_QB_Rating = mean(Quarterback_Rating),
+  ) %>%
+  mutate(Percentage_Of_GWD = Total_Game_Winning_Drives / Total_Games * 100) %>%
+  arrange(desc(Total_Game_Winning_Drives))
+
+datatable(head(gwd,5))
+```
+
+
+Now Lets take a look at how these 5 Quarterbacks vary from eachother in the other statistical categories: 
+```{r, echo = FALSE}
+top5gwd2 <- gwd %>%
+  head(., 5) %>%
+  pivot_longer(
+    cols = c(Total_Game_Winning_Drives, Avg_TD_per_Year, Avg_Int_per_Year, Avg_QB_Rating),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+
+ggplot(top5gwd2, aes(x = Player, y = Value, fill = Player)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(
+    title = "Top 5 Game Winning Drive Quarterbacks from 2009 - 2018",
+    x = "Player",
+    y = "Value",
+    fill = "Player"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank())
+```
+
+
+We can see that Drew Brees who leads in Game Winning Drives Leads in Quarterback Rating and Average Touchdowns per Year, but Matthew Stafford who ranked second doesn't come in second in those categories. So perhaps there isn't a direct correlation to statistical success when a quarterback is clutch, How about we relate it to games won ? lets take these 5 quarterbacks and see if the games they won correlate to their success in game winning drives.
+
+
+```{r, echo = FALSE}
+
+winners <- df %>%
+  separate(Record, into = c("Wins", "Losses", "Ties"), sep = "-", convert = TRUE)
+
+br <- winners %>%
+  filter(Player == "Ben Roethlisberger")
+
+q3_plot1 <- ggplot(data = br) +
+  geom_line(aes(x = Year, y = Wins), color = 'black') +
+  geom_line(aes(x = Year, y = Game_Winning_Drives), color = 'blue') +
+  labs(
+    title = "B.Roethlisberger Wins vs GWD",
+    subtitle = 'Black = W, Blue = GWD',
+    x = "Year",
+    y = "Wins"
+  ) 
+  
+db <- winners %>%
+  filter(Player == "Drew Brees")
+
+q3_plot2 <- ggplot(data = db) +
+  geom_line(aes(x = Year, y = Wins), color = 'black') +
+  geom_line(aes(x = Year, y = Game_Winning_Drives), color = 'blue') +
+  labs(
+    title = "D.Brees Wins vs GWD",
+    subtitle = 'Black = W, Blue = GWD',
+    x = "Year",
+    y = "Wins"
+  ) 
+
+em <- winners %>%
+  filter(Player == "Eli Manning")
+
+q3_plot3 <- ggplot(data = em) +
+  geom_line(aes(x = Year, y = Wins), color = 'black') +
+  geom_line(aes(x = Year, y = Game_Winning_Drives), color = 'blue') +
+  labs(
+    title = "E.Manning Wins vs GWD",
+    subtitle = 'Black = W, Blue = GWD',
+    x = "Year",
+    y = "Wins"
+  ) 
+
+mr <- winners %>%
+  filter(Player == "Matt Ryan")
+
+q3_plot4 <- ggplot(data = mr) +
+  geom_line(aes(x = Year, y = Wins), color = 'black') +
+  geom_line(aes(x = Year, y = Game_Winning_Drives), color = 'blue') +
+  labs(
+    title = "M.Ryan Wins vs GWD",
+    subtitle = 'Black = W, Blue = GWD',
+    x = "Year",
+    y = "Wins"
+  ) 
+
+ms <- winners %>%
+  filter(Player == "Matthew Stafford")
+
+q3_plot5 <- ggplot(data = ms) +
+  geom_line(aes(x = Year, y = Wins), color = 'black') +
+  geom_line(aes(x = Year, y = Game_Winning_Drives), color = 'blue') +
+  labs(
+    title = "M.Stafford Wins vs GWD",
+    subtitle = 'Black = W, Blue = GWD',
+    x = "Year",
+    y = "Wins"
+  ) 
+
+q3_plot1 + q3_plot2 + q3_plot3 + q3_plot4 + q3_plot5
+```
+
+This gives us an indicator that there is a relationship between game Winning Drives and Wins. Many call the NFL the "Any Given Sunday League" Which means any given Sunday could be a win or a loss because of how close competition is. This Graph Shows that There are indeed a lot of close games because Game Winning Drives means you are going on to win by one score. 
+
+
+### Conclusion for Question 3 
+We can conclude that in **some** cases Game Winning Drives can directly translate to statistical success, but Game Winning Drives Correlates more directly with Total Wins over the Year. So the more clutch a Quarterback is, the more likely they are to have a good season. As far as statistical success, I believe that it comes down to, the better the Quarterback is the more likely they are to show up big when the game is on the line. 
+
+
+# Thank You
+Thank you for looking at my Passer Report. We came to many solutions with evidence shown in graphs, I hope you have a better understanding of Quarterbacks in the NFL. Thank You !
